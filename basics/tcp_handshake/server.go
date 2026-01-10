@@ -1,55 +1,78 @@
-// package tcphandshake
 package main
 
 import (
-    "bufio"
-    "fmt"
-    "net"
-    "strings"
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"net"
+	"strings"
 )
-//send a greeting to the client asking for a username 
+
+// Message struct for handshake and chat
+type Message struct {
+	Type     string `json:"type"`              // "handshake" or "chat"
+	Username string `json:"username,omitempty"` // optional
+	Content  string `json:"content,omitempty"`  // message content
+}
+
 func handleConnection(conn net.Conn) {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
 
-    defer conn.Close()
-    
-    // writes bytes to the TCP connection 
-    conn.Write([]byte("WELCOME! Please send your username:\n"))
+	// Step 1: Send greeting
+	greet := Message{Type: "handshake", Content: "WELCOME! Please send your username:"}
+	data, _ := json.Marshal(greet)
+	conn.Write(append(data, '\n'))
 
-    // Step 2: Read username from client
-    reader := bufio.NewReader(conn) //allows reading lines 
-    username, _ := reader.ReadString('\n') //reads until client presses enter
-    username = strings.TrimSpace(username) 
+	// Step 2: Receive handshake (username) from client
+	line, _ := reader.ReadString('\n')
+	line = strings.TrimSpace(line)
 
-    // Step 3: Acknowledge handshake/ sens back a handshake confirmation
-    conn.Write([]byte(fmt.Sprintf("Hello %s! Handshake complete.\n", username)))
+	var msg Message
+	err := json.Unmarshal([]byte(line), &msg)
+	if err != nil || msg.Type != "handshake" || msg.Username == "" {
+		fmt.Println("Invalid handshake, closing connection")
+		return
+	}
+	username := msg.Username
+	fmt.Printf("%s connected!\n", username)
 
-    // Keep connection alive for chat/ prints each message to server console
-    for {
-        msg, err := reader.ReadString('\n')
-        if err != nil { // err triggers when client closes the connection 
-            fmt.Printf("%s disconnected.\n", username)
-            break
-        }
-        fmt.Printf("[%s]: %s", username, msg)
-    }
+	// Step 3: Send handshake confirmation
+	confirm := Message{Type: "handshake", Username: username, Content: "Handshake complete."}
+	data, _ = json.Marshal(confirm)
+	conn.Write(append(data, '\n'))
+
+	// Step 4: Chat loop
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Printf("%s disconnected.\n", username)
+			break
+		}
+		line = strings.TrimSpace(line)
+		var chatMsg Message
+		err = json.Unmarshal([]byte(line), &chatMsg)
+		if err != nil || chatMsg.Type != "chat" {
+			fmt.Println("Invalid chat message received")
+			continue
+		}
+		fmt.Printf("[%s]: %s\n", chatMsg.Username, chatMsg.Content)
+	}
 }
 
 func main() {
-	//this line starts the port of 9000  
-    listener, err := net.Listen("tcp", ":9000")
-    if err != nil {
-        panic(err)
-    }
-    fmt.Println("Server listening on port 9000...")
-    // listener waits for the incoming client
-    for {
-		//listener = blocks until a client connects, return connection object conn
-        conn, err := listener.Accept()
-        if err != nil {
-            fmt.Println("Connection error:", err)
-            continue
-        }
-        go handleConnection(conn)
-		//lightweigth threas for each client, spawns a new goroutine
-    }
+	listener, err := net.Listen("tcp", ":9000")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("Server listening on port 9000...")
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			fmt.Println("Connection error:", err)
+			continue
+		}
+		go handleConnection(conn)
+	}
 }
